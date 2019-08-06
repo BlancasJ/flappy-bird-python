@@ -157,9 +157,8 @@ def draw_window(win, bird, pipes, base, score, game_over=False):
     pygame.display.update()
 
 
-def main():
-    win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
-    pygame.display.set_caption("Flappy Bird")
+def play(win):
+    pygame.display.set_caption("Flappy Bird — Manual")
     clock = pygame.time.Clock()
 
     bird = Bird(230, 350)
@@ -168,13 +167,14 @@ def main():
     score = 0
     game_over = False
 
-    run = True
-    while run:
+    while True:
         clock.tick(30)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                run = False
+                return "quit"
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return "menu"
                 if event.key == pygame.K_SPACE and not game_over:
                     bird.jump()
                 if event.key == pygame.K_r and game_over:
@@ -213,6 +213,10 @@ def main():
 
         draw_window(win, bird, pipes, base, score, game_over)
 
+
+def main():
+    win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
+    play(win)
     pygame.quit()
 
 

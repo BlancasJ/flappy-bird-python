@@ -1,11 +1,15 @@
 import pygame
 import neat
 import os
-import sys
 
 from game_bird import Bird, Pipe, Base, BG_IMG, STAT_FONT, WIN_WIDTH, WIN_HEIGHT
 
 GEN = 0
+
+
+class StopTraining(Exception):
+    def __init__(self, reason):
+        self.reason = reason
 
 
 def draw_window(win, birds, pipes, base, score, gen, alive):
@@ -29,96 +33,100 @@ def draw_window(win, birds, pipes, base, score, gen, alive):
     pygame.display.update()
 
 
-def eval_genomes(genomes, config):
-    global GEN
-    GEN += 1
+def _make_eval_genomes(win):
+    def eval_genomes(genomes, config):
+        global GEN
+        GEN += 1
 
-    nets = []
-    ge = []
-    birds = []
+        nets = []
+        ge = []
+        birds = []
 
-    for _, genome in genomes:
-        genome.fitness = 0
-        net = neat.nn.FeedForwardNetwork.create(genome, config)
-        nets.append(net)
-        birds.append(Bird(230, 350))
-        ge.append(genome)
+        for _, genome in genomes:
+            genome.fitness = 0
+            net = neat.nn.FeedForwardNetwork.create(genome, config)
+            nets.append(net)
+            birds.append(Bird(230, 350))
+            ge.append(genome)
 
-    base = Base(730)
-    pipes = [Pipe(600)]
-    win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
-    pygame.display.set_caption("Flappy Bird — NEAT")
-    clock = pygame.time.Clock()
-    score = 0
+        base = Base(730)
+        pipes = [Pipe(600)]
+        pygame.display.set_caption("Flappy Bird — NEAT")
+        clock = pygame.time.Clock()
+        score = 0
 
-    run = True
-    while run and len(birds) > 0:
-        clock.tick(30)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
-                pygame.quit()
-                sys.exit()
+        while len(birds) > 0:
+            clock.tick(30)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    raise StopTraining("quit")
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    raise StopTraining("menu")
 
-        pipe_ind = 0
-        if len(pipes) > 1 and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width():
-            pipe_ind = 1
+            pipe_ind = 0
+            if len(pipes) > 1 and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width():
+                pipe_ind = 1
 
-        for x, bird in enumerate(birds):
-            ge[x].fitness += 0.1
-            bird.move()
-
-            output = nets[x].activate((
-                bird.y,
-                abs(bird.y - pipes[pipe_ind].height),
-                abs(bird.y - pipes[pipe_ind].bottom),
-            ))
-
-            if output[0] > 0.5:
-                bird.jump()
-
-        add_pipe = False
-        rem = []
-        for pipe in pipes:
             for x, bird in enumerate(birds):
-                if pipe.collide(bird):
-                    ge[x].fitness -= 1
+                ge[x].fitness += 0.1
+                bird.move()
+
+                output = nets[x].activate((
+                    bird.y,
+                    abs(bird.y - pipes[pipe_ind].height),
+                    abs(bird.y - pipes[pipe_ind].bottom),
+                ))
+
+                if output[0] > 0.5:
+                    bird.jump()
+
+            add_pipe = False
+            rem = []
+            for pipe in pipes:
+                for x, bird in enumerate(birds):
+                    if pipe.collide(bird):
+                        ge[x].fitness -= 1
+                        birds.pop(x)
+                        nets.pop(x)
+                        ge.pop(x)
+
+                if pipe.x + pipe.PIPE_TOP.get_width() < 0:
+                    rem.append(pipe)
+
+                if not pipe.passed and birds and pipe.x < birds[0].x:
+                    pipe.passed = True
+                    add_pipe = True
+
+                pipe.move()
+
+            if add_pipe:
+                score += 1
+                for g in ge:
+                    g.fitness += 5
+                pipes.append(Pipe(600))
+
+            for r in rem:
+                pipes.remove(r)
+
+            for x, bird in enumerate(birds):
+                if bird.y + bird.img.get_height() >= 730 or bird.y < 0:
                     birds.pop(x)
                     nets.pop(x)
                     ge.pop(x)
 
-            if pipe.x + pipe.PIPE_TOP.get_width() < 0:
-                rem.append(pipe)
+            base.move()
+            draw_window(win, birds, pipes, base, score, GEN, len(birds))
 
-            if not pipe.passed and birds and pipe.x < birds[0].x:
-                pipe.passed = True
-                add_pipe = True
+            if score > 50:
+                break
 
-            pipe.move()
-
-        if add_pipe:
-            score += 1
-            for g in ge:
-                g.fitness += 5
-            pipes.append(Pipe(600))
-
-        for r in rem:
-            pipes.remove(r)
-
-        for x, bird in enumerate(birds):
-            if bird.y + bird.img.get_height() >= 730 or bird.y < 0:
-                birds.pop(x)
-                nets.pop(x)
-                ge.pop(x)
-
-        base.move()
-        draw_window(win, birds, pipes, base, score, GEN, len(birds))
-
-        if score > 50:
-            break
+    return eval_genomes
 
 
-def run(config_path):
+def train(win, config_path):
+    global GEN
+    GEN = 0
+
     config = neat.config.Config(
         neat.DefaultGenome,
         neat.DefaultReproduction,
@@ -132,8 +140,19 @@ def run(config_path):
     stats = neat.StatisticsReporter()
     p.add_reporter(stats)
 
-    winner = p.run(eval_genomes, 50)
-    print("\nBest genome:\n{!s}".format(winner))
+    try:
+        winner = p.run(_make_eval_genomes(win), 50)
+        print("\nBest genome:\n{!s}".format(winner))
+        return "menu"
+    except StopTraining as e:
+        print("\nTraining stopped by user.")
+        return e.reason
+
+
+def run(config_path):
+    win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
+    train(win, config_path)
+    pygame.quit()
 
 
 if __name__ == "__main__":
